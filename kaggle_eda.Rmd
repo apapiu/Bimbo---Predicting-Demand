@@ -1,0 +1,379 @@
+---
+title: "Bimbo EDA"
+author: "Alexandru Papiu"
+date: "June 20, 2016"
+output:
+  html_document:
+    fig_height: 5
+    fig_width: 7
+    highlight: tango
+    theme: readable
+---
+
+The Bimbo competition:
+
+The purpose of this report is twofold. The first is to analyze and visualize the data. The second is to share ways of working with data this big in R, in memory. This dataset has 74 million rows which is quite a lot and I had some difficulties working with it in R. Below I will share some things that worked and others that didn't. Keep in mind that I am no R expert (in fact I know embarrasingly little of what goes "under the hood") and feel free to add your own tips and tricks either in the comments or by forking the script.
+
+
+###Tips:
+
+1. `system.time()` is your friend. If you're not sure which way to do something is faster, a quick comparision will tell you. 
+
+2. Stay in the world of `data.frame`
+
+
+### Read and Clean:
+
+Let's first load the packages and read in the data:
+
+```{r, warning=FALSE, message=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+```
+
+Now let's read in the data. There are some issues: first the data is ordered by week and not randomized so reading in the first n rows wouldn't work that well. Secondly I haven't found a way to read random rows from a csv directly in R so we'll just read the whole darn thing (74 million rows) in memory and then randomly subsample 10 million rows.
+
+```{r}
+train = fread("/Users/alexpapiu/Documents/Data/Bimbo/train.csv",
+              select = c("Semana", "Agencia_ID", "Canal_ID", "Ruta_SAK",
+                         "Cliente_ID", "Producto_ID", "Demanda_uni_equil"),
+              colClasses = c(Semana = "numeric", Agencia_ID = "character",
+                             Canal_ID = "character", Ruta_SAK = "character",
+                             Cliente_ID = "character", Producto_ID = "character",
+                             Demanda_uni_equil = "numeric"),
+              showProgress = FALSE,
+              nrow = 1e6)
+
+
+#n = 1e6 #number of rows to be subsetted
+#set.seed(423)
+#sam = sample(1:nrow(train), n)
+#train = train[sam]
+
+kable(sample_n(train, 5))
+```
+
+So we have 6 features and the response variable `Demanda_uni_equil` which is continuous.
+
+Really all of our features other than semana (week) are categorical but are encoded as integer ID's - this might trip up visualization packages so we tell data.table to read them in as characters. We could have also changed them to factors but a lot of them have many unique values and factors with many levels are unwieldly sometimes.
+
+We also have a bunch of other docs, let's join them.
+
+prod_id = fread("/Users/alexpapiu/Documents/Data/Bimbo/producto_tabla.csv")
+town_state = fread("/Users/alexpapiu/Documents/Data/Bimbo/town_state.csv")    
+
+train %>% #this takes like 30 seconds.
+    left_join(town_state) %>% 
+    left_join(prod_id) -> train
+
+Let's see how many different unique values we have for each feature:
+
+```{r}
+sapply(train, function(x)length(unique(x)))
+```
+
+Phew quite a few have lots of levels - we'll see how to deal with this later.
+
+For now let's explore the Demand variable for a bit:
+
+```{r}
+train %>% 
+    count(Demanda_uni_equil) %>% 
+    filter(Demanda_uni_equil < 100) %>% 
+    ggplot(aes(x = Demanda_uni_equil, y = n)) +
+        geom_bar(stat = "identity") +
+        ggtitle("Distribution of Demand")
+
+```
+
+ 
+```{r}
+train %>% 
+    count(Demanda_uni_equil) %>% 
+    filter(Demanda_uni_equil > 25, Demanda_uni_equil < 100) %>% 
+    ggplot(aes(x = Demanda_uni_equil, y = n)) +
+        geom_bar(stat = "identity") +
+        ggtitle("Distribution of Demand - The Tail")
+```
+
+Hmmm..very interesting - certain "round" values - 40, 60, 80 are much more common as demands.
+
+###Look at the Features:
+
+Let's first look at semana - the week of the transcation:
+
+```{r}
+ggplot(train , aes(x = Semana)) + geom_bar()
+```
+
+Nothing teribly exciting here, what's more interesting is to see how the week is related to the demand. The week is a categorical feature while the demand is numerical - what's the best way to visualize this? Let's try putting the demand on the x axis and coloring the bars using the categorical features. Since the demand is highly skewed, it'll help to only look at demands that are smaller. Since we're probably going to do this with the other variables as well let's make a function:
+
+```{r}
+plot_it = function(train, feat, tresh = 25) {
+    train %>% 
+        filter(Demanda_uni_equil < tresh) %>% 
+        ggplot(aes_string(x = "Demanda_uni_equil", fill = feat)) +
+        geom_bar(position = "fill") +
+        ggtitle(paste("Demand by", feat))
+}
+```
+
+```{r}
+plot_it(train, "Semana")
+```
+
+Ok not bad but this we can't really see the distribution of the demand because of the normalization so let's do a "stacked" version.
+
+```{r}
+plot_it(train, "Semana") + geom_bar(position = "stack")
+```
+
+It doesn't look like week is going to matter very much.
+
+```{r}
+plot_it(train, "Semana") +
+    geom_bar(position = "identity") +
+    facet_wrap(~ Semana)
+```
+
+
+Looking at Client_ID:
+
+We have `r length(unique(train$Cliente_ID))` different Clients - waaay to many to visualize in any coherent way. Let's for now look at the top clients:
+
+```{r, fig.height=8, fig.width=10}
+
+train %>% count(Cliente_ID, sort = TRUE) -> clients
+top_clients = clients$Cliente_ID[1:21]
+
+kable(head(clients))
+```
+
+
+```{r}
+qplot(data = clients, n, bins = 200)
+```
+
+It looks like there is one client that is a big buyer, let's look at this cliente first:
+
+```{r}
+train %>% filter(Cliente_ID == clients$Cliente_ID[1]) -> biggest_client
+
+ggplot(biggest_client, aes(x= Demanda_uni_equil)) + geom_bar()
+
+#ok, now let's look at smaller demands only:
+biggest_client %>% 
+    filter(Demanda_uni_equil < 400, Demanda_uni_equil > 1) %>% 
+    ggplot(aes(x= Demanda_uni_equil)) + geom_bar()
+```
+
+```{r}
+#and by week:
+biggest_client %>% 
+    filter(Demanda_uni_equil < 400, Demanda_uni_equil > 1) %>% 
+    ggplot(aes(x= Demanda_uni_equil)) +
+    geom_bar() + 
+    facet_wrap( ~ Semana)
+```
+
+And by product, unfortunately there are too many product levels so let's plot the most popular products for this specific client:
+
+```{r}
+biggest_client %>% count(Producto_ID) %>% arrange(desc(n)) -> products_biggest_client
+top_products = products_biggest_client$Producto_ID[1:12]
+
+biggest_client %>% 
+    filter(Producto_ID %in% top_products) %>% 
+    filter(Demanda_uni_equil < 400, Demanda_uni_equil > 0) %>% 
+    ggplot(aes(x= Demanda_uni_equil)) +
+    geom_histogram(bins = 50) + 
+    facet_wrap( ~ Producto_ID)
+```
+
+Hmm these distributions are quite different from the oveall distribution of the demand - remember we are looking at the most popular products for the most popular client - so these shouldn't be too representative of the general population.
+
+
+Let's pick another client:
+
+```{r}
+
+train %>%
+    filter(Cliente_ID == clients$Cliente_ID[5]) -> another_client
+
+another_client %>% count(Producto_ID,sort = TRUE) -> products
+top_products = products$Producto_ID[1:20]
+
+
+another_client %>% 
+    filter(Producto_ID %in% top_products) %>% 
+    filter(Demanda_uni_equil < 400) %>% 
+    ggplot(aes(x= Demanda_uni_equil)) +
+    geom_histogram(bins = 50) + 
+    facet_wrap( ~ Producto_ID)
+ 
+```
+
+This is very interesting, notice the gaps in between the bars. For some of the product ID's you usually have only certain values it seems - however these are different values for each product. Let's take a closer look.
+
+Do these trends hold if we look at all clients for the specific product?
+
+```{r}
+train[train$Producto_ID == "31187"] -> a_product
+
+plotly::ggplotly(
+qplot(data = filter(a_product, Demanda_uni_equil < 500), x = Demanda_uni_equil, geom = "bar"))
+```
+
+Indeed they do, the majority of demands are multiples of 20 with a few other values scatttered in between.
+
+Let's try another product:
+
+```{r}
+#31198
+
+train[train$Producto_ID == "32335"] -> a_product
+
+plotly::ggplotly(
+qplot(data = filter(a_product, Demanda_uni_equil < 500), x = Demanda_uni_equil, geom = "bar"))
+```
+
+Yup, same pattern. Keep in my mind that I choose these id's because they exhibited the pattern for the particular client we looked at.
+
+
+
+The distribution of the demand doesn't seem to change much from week to week so at least for this client the time dimension of this question doesn't matter too much.
+
+
+###let's now look at how other clients behave with respect to demand:
+
+```{r, }
+top_clients = clients$Cliente_ID[2:21]  
+```
+
+
+```{r, fig.height=8, fig.width=10}
+train %>% 
+    filter(Cliente_ID %in% top_clients) %>% 
+    plot_it("Cliente_ID", 50) + 
+    geom_bar(position = "identity") +
+    facet_wrap(~ Cliente_ID)
+
+```
+
+A lot of the most popular Client_ID's have many transcations with 0 demand so let's look at the most popular when we filter out 0 demand events. Let's also filter over 500 demand events just to get a differnt view:
+
+```{r}
+train %>% filter(Demanda_uni_equil > 0, Demanda_uni_equil < 100) %>% count(Cliente_ID, sort = TRUE) -> top_nonzero_clients
+top_nonzero_clients = top_nonzero_clients$Cliente_ID[2:21] #the first is too popular 
+
+train %>% 
+    filter(Cliente_ID %in% top_nonzero_clients) %>% 
+    plot_it("Cliente_ID", 50) + 
+    geom_bar(position = "identity") +
+    facet_wrap(~ Cliente_ID)
+```
+
+
+
+```{r}
+train %>% 
+    filter(Cliente_ID == "19260") %>% 
+    plot_it("Cliente_ID", 200) + 
+    geom_bar(position = "identity")
+    
+```
+
+
+```{r}
+train %>% 
+    filter(Cliente_ID %in% top_clients) %>% 
+    plot_it("Cliente_ID", 50) +
+    geom_bar()
+```
+
+Ok now let's move on to product_id:
+
+```{r}
+train %>% count(Producto_ID) %>% arrange(desc(n)) -> counts
+```
+
+```{r}
+qplot(data = counts, x = n, bins = 100)
+```
+
+````{r}
+sum(counts$n[1:200])/sum(counts$n) 
+```
+
+So the most popular 200 product id's represent around `r sum(counts$n[1:200])/sum(counts$n)` of the data. This is good news since we can decrease the number of factor significatly in our models for `Product_ID`.
+
+
+```{r}
+train %>% 
+    filter(Producto_ID %in% counts$Producto_ID[13:14]) %>% 
+    plot_it("Producto_ID", 20) + 
+    geom_bar(position = "identity", alpha = 0.6)
+
+
+train %>% 
+    filter(Producto_ID %in% counts$Producto_ID[1:6]) %>% 
+    plot_it("Producto_ID", 20) + 
+    geom_bar(position = "fill", alpha = 1)
+
+```
+
+
+```{r, fig.height=8, fig.width=10}
+train %>%
+    sample_n(size = 2e5) %>% #this takes too long for the entire dataset:
+    filter(Producto_ID %in% counts$Producto_ID[1:16]) %>% 
+    plot_it("Producto_ID", 20) + 
+    geom_bar() +
+    facet_wrap(~ Producto_ID) +
+    theme(legend.position = "none")
+```
+
+Let's also take a look at some id's that are not the most popular:
+
+```{r}
+train %>% 
+    filter(Producto_ID %in% counts$Producto_ID[101:116]) %>% 
+    plot_it("Producto_ID", 20) + 
+    geom_bar() +
+    facet_wrap(~ Producto_ID) +
+    theme(legend.position = "none")
+```
+
+And let's look at some more product ID's, why not?
+
+```{r}
+train %>%  #this takes long for the entire dataset:
+    filter(Producto_ID %in% counts$Producto_ID[141:156]) -> temp
+
+temp %>% 
+    plot_it("Producto_ID", 50) + 
+    geom_bar() +
+    facet_wrap(~ Producto_ID) +
+    theme(legend.position = "none")
+```
+
+After the join we also have a few new features. Let's look at state:
+
+```{r}
+
+states = unique(train$State)
+
+
+train[1:1e6] %>% 
+    filter(State %in% sample(states, 16)) %>% 
+    plot_it("State") +
+    geom_bar() + 
+    facet_wrap(~ State) +
+    theme(legend.position = "none")
+
+```
+
+Still the questions remains: How to see which products have fixed values(multiples of 10, 20 etc.)
+
