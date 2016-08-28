@@ -1,0 +1,135 @@
+---
+title: "Means/Medians"
+author: "Alexandru Papiu"
+date: "July 15, 2016"
+output:
+  html_document:
+    fig_height: 5
+    fig_width: 7
+    highlight: tango
+    theme: readable
+---
+
+In the Bimbo competition we have to develop a model to accurately forecast inventory demand based on historical sales data. A lot of the scripts have done something very simple - group the data by some factors by some variable and take the mean, median or some weird log transform and predict based on that. But which one is better? Here I'll try to take a more mathy approach and see if I can come up with a good answer. Then we'll test the theory on the dataset. 
+
+Firs things first what is the mean of a dataset? How about the median? We all know the basic numerical definitions but there is a slightly different way to look at the what they are:
+
+**Lemma 1** : Given an array $X = [x_1, x_2,..., x_n]$ the **mean** of this array is the unique value that minimizes the sum of squares: $$f(x) =  \sum\limits_{i = 1}^n (x_i - x)^2$$
+
+Proof: To find the extrema of $f$ we'll take the first deriative and set it equal to zero: $$ f'(x) =  \sum\limits_{i = 1}^n 2(x_i - x) = 0$$ so $$\sum\limits_{i = 1}^n x_i - nx = 0$$ and $$x = \frac{x_1 +...+x_n}{n}$$ Since $f$ is just a second degree polynomial with positive leading term this x will be a global minima - so we've proved our claim. Another way to think of this is that Given the array X, the mean $m$ is the unique value that minimizes the Mean Squared Error (MSE). Now since the square root is a monotonic function the mean will also mimize the Root Mean Square Error (RMSLE) which is just $\sqrt{f(x)}$ where $f$ is as above.
+
+
+How about the **median**? Well the median minimizes somthing else:
+
+
+**Lemma 2** : Given an array $X = [x_1, x_2,..., x_n]$ the **median** of this array is the value that minimizes the mean absolute error: $$f(x) =  \sum\limits_{i = 1}^n |x_i - x|$$
+
+Proof: Left to the reader :P (or read about it [here](http://math.stackexchange.com/questions/113270/the-median-minimizes-the-sum-of-absolute-deviations))
+
+By Lemma 2 the median minimizes MAE and thus also the RMAE.
+
+Ok great but the metric for our competition is not RMSE nor is it RMAE but **RMSLE**. What does this mean? Well let's look at the definition of RMSLE on kaggle's [webiste](https://www.kaggle.com/wiki/RootMeanSquaredLogarithmicError): For a given array $[x_1,..., x_n]$ and a value $x$: $$RMSLE(x) =   \sqrt{(\sum\limits_{i = 1}^n (log(x_i + 1) - log(x + 1))^2)}$$ 
+This is very similar to RMSE! In fact one can easily check that the following holds: $$RSMLE(x) = RMSE(log(x) + 1)$$
+
+So remember we're trying to find the value the minimizes the RMSLE, putting everything we've figured out togther we have:
+
+**Main Lemma**: Given an array $X = [x_1, x_2,..., x_n]$, the unique value that minimizes the RMSLE for $X$ is $$exp(mean(log(X) + 1)) - 1$$
+
+Proof: We're trying to minimize $$RMSLE(x) = RMSE(log(x) + 1)$$ so by lemma 1 we get that $log(x + 1) = mean(log(X + 1))$ and solving for $x$ we get that $x = exp(log(mean(X) + 1)) - 1$ and we're done.
+
+
+So the answer is not the mean nor the median but a transformation of the mean - who knew? Again this all depends on the metric we're trying to minimize: **if the metric is MAE take the median, if it's MSE take the mean and if its RMSLE take the log(x + 1), take the mean and then transform your variable back using the exponentional.** 
+
+Note that in R you can write this is `exp1m(log1p(mean(X)))` 
+
+
+
+Ok enough theory, let's see if this actully hold on our dataset.
+
+```{r, message=FALSE}
+library(data.table)
+library(Metrics)
+library(dplyr)
+library(knitr)
+
+n = 15e6
+
+train = fread("/Users/alexpapiu/Documents/Data/Bimbo/train.csv", 
+              select = c("Semana", "Cliente_ID", "Producto_ID", "Demanda_uni_equil"),
+              nrow = n)
+
+val = train[train$Semana == 4]
+train = train[train$Semana == 3]
+```
+
+Note that we created a valdidation set by splitting on the Semana so we can test the results outside the training set.
+
+```{r}
+head(train)
+```
+
+Remember we're trying to predict `Demanda_uni_equil`. Let's just predict using the mean, median and log transformed mean:
+
+```{r}
+y = train$Demanda_uni_equil
+mean_demand = mean(y)
+median_demand = median(y)
+log1p_mean = expm1(mean(log1p(y)))
+```
+
+And let's look at the errors:
+
+```{r}
+results = c(rmsle(y, mean_demand), rmsle(y, median_demand), rmsle(y, log1p_mean))
+names(results) = c("mean", "median", "log1p_mean")
+barplot(results, main = "RMSLE by method", ylab = "RMSLE", space = 0.6)
+```
+
+And indeed the results confirm the math (they better): the mean of the log transformed demand gets the best rmsle beating both the mean and median. The median also does much better than the mean - this is because of the demand distribution being asymetric. Note however the `expm1(mean(log1p(y)))` will _always_ get a better rsmle regardless of the distribution of y.
+
+Let's also do this on the validation set. Here the math doesn't guarantee anything:
+
+```{r}
+y_val = val$Demanda_uni_equil
+results = c(rmsle(y_val, mean_demand), rmsle(y_val, median_demand), rmsle(y_val, log1p_mean))
+names(results) = c("mean", "median", "log1p_mean")
+kable(as.data.frame(results))
+```
+
+
+```{r}
+barplot(results, main = "RMSLE by method on validation Set", ylab = "RMSLE", space = 0.6)
+```
+
+We get similar results on the validation set - the log1p_mean gets the lowest RMSLE.
+ 
+ ###Averaging by Group:
+A global average can only get you so far. Another thing you to try is to group by some categorical variable and average for each group. There are a few scripts doing this already - especially R_medians. Let's see how the different central tendencies do here. We'll group by Producto ID and then take the mean/median for each product and then join it back to the dataset:
+ 
+
+
+```{r}
+train[, .(mean = mean(Demanda_uni_equil),
+          median = median(as.double(Demanda_uni_equil)), #data.table doesn't like ints for medians
+          log1p_mean = expm1(mean(log1p(Demanda_uni_equil)))), by = .(Producto_ID)] %>% 
+    merge(val, all.y = TRUE, by = "Producto_ID") -> merged_val #merge with validation set by product
+
+kable(head(merged_val))
+```
+
+Now let's compute the rmsle on the validation set and visualize the results again. We have 52 NA's that we will just exclude:
+
+```{r}
+mask = !(is.na(merged_val$mean))
+y_val = merged_val$Demanda_uni_equil[mask]
+results = c(rmsle(y_val, merged_val$mean[mask]), 
+            rmsle(y_val, merged_val$median[mask]),
+            rmsle(y_val, merged_val$log1p_mean[mask]))
+names(results) = c("mean", "median", "log1p_mean")
+
+kable(as.data.frame(results))
+
+barplot(results, main = "RMSLE by method grouped by Product", ylab = "RMSLE", space = 0.6)
+```
+ 
+ And the math pushes us in the right direction once again. Thanks math.

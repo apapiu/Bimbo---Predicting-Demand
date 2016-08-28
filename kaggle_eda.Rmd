@@ -15,13 +15,6 @@ The Bimbo competition:
 The purpose of this report is twofold. The first is to analyze and visualize the data. The second is to share ways of working with data this big in R, in memory. This dataset has 74 million rows which is quite a lot and I had some difficulties working with it in R. Below I will share some things that worked and others that didn't. Keep in mind that I am no R expert (in fact I know embarrasingly little of what goes "under the hood") and feel free to add your own tips and tricks either in the comments or by forking the script.
 
 
-###Tips:
-
-1. `system.time()` is your friend. If you're not sure which way to do something is faster, a quick comparision will tell you. 
-
-2. Stay in the world of `data.frame`
-
-
 ### Read and Clean:
 
 Let's first load the packages and read in the data:
@@ -43,14 +36,13 @@ train = fread("/Users/alexpapiu/Documents/Data/Bimbo/train.csv",
                              Canal_ID = "character", Ruta_SAK = "character",
                              Cliente_ID = "character", Producto_ID = "character",
                              Demanda_uni_equil = "numeric"),
-              showProgress = FALSE,
-              nrow = 1e6)
+              showProgress = FALSE)
 
 
-#n = 1e6 #number of rows to be subsetted
-#set.seed(423)
-#sam = sample(1:nrow(train), n)
-#train = train[sam]
+n = 10e6 #number of rows to be subsetted
+set.seed(423)
+sam = sample(1:nrow(train), n)
+train = train[sam]
 
 kable(sample_n(train, 5))
 ```
@@ -58,15 +50,6 @@ kable(sample_n(train, 5))
 So we have 6 features and the response variable `Demanda_uni_equil` which is continuous.
 
 Really all of our features other than semana (week) are categorical but are encoded as integer ID's - this might trip up visualization packages so we tell data.table to read them in as characters. We could have also changed them to factors but a lot of them have many unique values and factors with many levels are unwieldly sometimes.
-
-We also have a bunch of other docs, let's join them.
-
-prod_id = fread("/Users/alexpapiu/Documents/Data/Bimbo/producto_tabla.csv")
-town_state = fread("/Users/alexpapiu/Documents/Data/Bimbo/town_state.csv")    
-
-train %>% #this takes like 30 seconds.
-    left_join(town_state) %>% 
-    left_join(prod_id) -> train
 
 Let's see how many different unique values we have for each feature:
 
@@ -108,7 +91,7 @@ Let's first look at semana - the week of the transcation:
 ggplot(train , aes(x = Semana)) + geom_bar()
 ```
 
-Nothing teribly exciting here, what's more interesting is to see how the week is related to the demand. The week is a categorical feature while the demand is numerical - what's the best way to visualize this? Let's try putting the demand on the x axis and coloring the bars using the categorical features. Since the demand is highly skewed, it'll help to only look at demands that are smaller. Since we're probably going to do this with the other variables as well let's make a function:
+Nothing teribly exciting here, what's more interesting is to see how the week and other features are related to the demand. The week is a categorical feature while the demand is numerical - what's the best way to visualize this? Let's try putting the demand on the x axis and coloring the bars using the categorical features. Since the demand is highly skewed, it'll help to only look at demands that are smaller. Since we're probably going to do this with the other variables as well let's make a function:
 
 ```{r}
 plot_it = function(train, feat, tresh = 25) {
@@ -144,7 +127,6 @@ Looking at Client_ID:
 We have `r length(unique(train$Cliente_ID))` different Clients - waaay to many to visualize in any coherent way. Let's for now look at the top clients:
 
 ```{r, fig.height=8, fig.width=10}
-
 train %>% count(Cliente_ID, sort = TRUE) -> clients
 top_clients = clients$Cliente_ID[1:21]
 

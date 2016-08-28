@@ -1,0 +1,141 @@
+---
+title: "Bimbo EDA"
+author: "Alexandru Papiu"
+date: "June 20, 2016"
+output:
+  html_document:
+    fig_height: 6
+    fig_width: 9
+    highlight: tango
+    theme: readable
+---
+
+The competition - In the Bimbo competition we have to develop a model to accurately forecast inventory demand based on historical sales data. Let's take a look at the data:
+
+### Read and Clean:
+
+Let's first load the packages and read in the data:
+
+```{r, warning=FALSE, message=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+```
+
+Now let's read in the data. There are some issues: first the data is ordered by week and not randomized so reading in the first n rows isn't ideal. Secondly I haven't found a way to read random rows from a csv directly in R so we'll just read the whole darn thing (74 million rows) in memory and then randomly subsample 5 million rows.
+
+```{r}
+train = fread("/Users/alexpapiu/Documents/Data/Bimbo/train.csv",
+              select = c("Semana", "Agencia_ID", "Canal_ID", "Ruta_SAK",
+                         "Cliente_ID", "Producto_ID", "Demanda_uni_equil"),
+              colClasses = c(Semana = "numeric", Agencia_ID = "character",
+                             Canal_ID = "character", Ruta_SAK = "character",
+                             Cliente_ID = "character", Producto_ID = "character",
+                             Demanda_uni_equil = "numeric"),
+              showProgress = FALSE,
+              nrows = 1e6)
+
+
+#n = 5e6 #number of rows to be subsetted
+#set.seed(423)
+#sam = sample(1:nrow(train), n)
+#train = train[sam]
+
+kable(sample_n(train, 5))
+```
+
+
+So we have 6 features and the response variable `Demanda_uni_equil` which is continuous.
+
+Really all of our features other than semana (week) are categorical but are encoded as integer ID's - this might trip up visualization packages so we tell data.table to read them in as characters. We could have also changed them to factors but a lot of them have many unique values and factors with many levels are unwieldly sometimes.
+
+Let's see how many different unique values we have for each feature:
+
+```{r}
+sapply(train, function(x)length(unique(x)))
+```
+
+
+Phew quite a few have lots of levels - we'll see how to deal with this later.
+
+For now let's explore the Demand variable for a bit, since there are quite a few outliers let's only look at Demand less than 100:
+
+```{r}
+train %>% 
+    count(Demanda_uni_equil) %>% 
+    filter(Demanda_uni_equil < 100) %>% 
+    ggplot(aes(x = Demanda_uni_equil, y = n)) +
+        geom_bar(stat = "identity") +
+        ggtitle("Distribution of Demand")
+```
+
+
+```{r}
+train %>% 
+    count(Demanda_uni_equil) %>% 
+    filter(Demanda_uni_equil > 25, Demanda_uni_equil < 100) %>% 
+    ggplot(aes(x = Demanda_uni_equil, y = n)) +
+        geom_bar(stat = "identity") +
+        ggtitle("Distribution of Demand - The Tail")
+```
+
+Hmmm..very interesting - certain "round" values - 40, 60, 80 are much more common as demands.
+
+
+### A look at the features:
+
+I'd like to know more about the relation between different features and the demand. All of the features are categorical and a lot of them have hundreds or thousands of levels so this will pose some challanges. 
+
+#### Producto_ID:
+
+We have a total of `r length(unique(train$Producto_ID))` Product ID's - waay to many to visualize at once. For starters let's just look at the most popular products:
+
+```{r}
+train %>% count(Producto_ID, sort = TRUE) -> product_count
+top_products = product_count$Producto_ID[1:12]
+```
+
+
+```{r}
+train %>% 
+    filter(Producto_ID %in% top_products) %>% 
+    ggplot(aes(x = Producto_ID, y = log1p(Demanda_uni_equil))) +
+    geom_boxplot() +
+    ggtitle("Boxplot of Demand per Product")
+    
+```
+
+Note that the y axis here is log(demand + 1) - this helps with the skewed data and allows us to more effectively visualize the summary of the distribution by product. There seems to be some variation in Demand based on Product. One thing we can't see from above is the actual distributions so let's try a violin plot.
+
+```{r}
+train %>% 
+    filter(Producto_ID %in% top_products[4:9]) %>% 
+    ggplot(aes(x = Producto_ID, y = log1p(Demanda_uni_equil))) +
+    geom_violin()
+```
+
+That looks cool but it is not terribly useful, my guess is that the kernel estimates gets confused since the demand is given to us in integers. Let's instead look at the histograms of Demand by Product:
+
+```{r}
+train %>% 
+    filter(Producto_ID %in% top_products) %>% 
+    filter(Demanda_uni_equil < 20) %>% 
+    ggplot(aes(x = Demanda_uni_equil, fill = Producto_ID)) +
+    geom_bar() +
+    facet_wrap( ~ Producto_ID) +
+    ggtitle()
+```
+
+Interesting. It seems like there are roughly two different types of distributions. We can also stack these distributions on top of each other for a silghtly different perspective:
+
+```{r}
+train %>% 
+    filter(Producto_ID %in% top_products) %>% 
+    filter(Demanda_uni_equil < 20) %>% 
+    ggplot(aes(x = Demanda_uni_equil, fill = Producto_ID)) +
+    geom_bar(position = "fill") 
+```
+
+
+

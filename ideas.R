@@ -38,3 +38,20 @@ X_val = split_half(val)
 #fixing the NA's
 X = fix_NAs(X)
 X_val = fix_NAs(X_val)
+
+#idea - not really working - use the mean for each prediction in your:
+
+#~~~~~~~~~~~~~~~~~~~~~
+#adding the mean:
+
+train[Town != "2027"][,.(mean_prod = mean(Demanda_uni_equil), count_prod = .N),by =  Cliente_ID][count_prod > 10] -> mean_prod
+
+val = merge(val, mean_prod, all.x = TRUE, by = "Cliente_ID") %>% select(- count_prod)
+
+mean_prod %>%  
+    merge(train, all.y = TRUE, by = "Cliente_ID") %>% 
+    #mutate(mean_prod =  (mean_prod * count_prod - Demanda_uni_equil)/ (count_prod - 1)) %>% 
+    #mutate(mean_prod = coalesce(mean_prod, mean(train$Demanda_uni_equil))) %>% 
+    select(-count_prod) %>% 
+    as.data.table() -> train
+

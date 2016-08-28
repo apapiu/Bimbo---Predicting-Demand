@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Mean, Medians and Log Transforms"
 output:
   html_document: default
   html_notebook: default
@@ -81,13 +81,15 @@ train[, .(mean = mean(Demanda_uni_equil),
 head(merged_val)
 ```
 
-Now let's compute the rmsle and visualize the results again:
+Now let's compute the rmsle on the validation set and visualize the results again. We have 52 NA's that we will just exclude:
+
 ```{r}
-y_val = merged_val$Demanda_uni_equil
-results = c(rmsle(y_val, merged_val$mean), 
-            rmsle(y_val, merged_val$median),
-            rmsle(y_val, merged_val$log1p_mean))
+mask = !(is.na(merged_val$mean))
+y_val = merged_val$Demanda_uni_equil[mask]
+results = c(rmsle(y_val, merged_val$mean[mask]), 
+            rmsle(y_val, merged_val$median[mask]),
+            rmsle(y_val, merged_val$log1p_mean[mask]))
 names(results) = c("mean", "median", "log1p_mean")
 barplot(results)
 ```
-
+ And the math pushes us in the right direction once again. 
