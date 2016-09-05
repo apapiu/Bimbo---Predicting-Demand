@@ -80,3 +80,15 @@ preds = coalesce(merged$mean_prod_client,
                  merged$mean_prod, total_mean)
 
 rmse(merged$Demanda_uni_equil, preds)
+
+
+#~~~~~~~~~~
+#the ideas above work ok when the number of features is small but we're looking at 2^n comparisions here
+#where n is the number of features.
+#another idea - similar to forward stepwise linear regression: try to see which one single feature gives 
+#best validation error - F_1, then add another one F_2 - picked so it minimizes validation rmse, then
+#keep going like this - this takes at most n^2 comparisons.
+
+#Ensembling the results:
+#another good idea is that when we have all these means for grouping by Producto, Cliente, Producto+Cliente
+#we can use them as inputs in a new model. The big issue here is overfitting however.

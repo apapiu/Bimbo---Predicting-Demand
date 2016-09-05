@@ -97,7 +97,7 @@ model = xgb.train(data = dtrain,
 
 preds = predict(model, as.matrix(X_test))
 preds = expm1(preds)
-preds[preds > 0] = 0
+preds[preds < 0] = 0
 
 id = rec_train[tst == 1]$id
 

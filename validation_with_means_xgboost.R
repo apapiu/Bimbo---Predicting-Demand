@@ -39,7 +39,9 @@ merge(train, products, all.x = TRUE, by = "Producto_ID") -> train
 
 #train$Demanda_uni_equil = expm1(train$Demanda_uni_equil)
 
-m = 8
+m = c(8, 7)
+
+#m = 8
 
 
 mask = !(train$Semana %in% c(m, 9))
@@ -96,7 +98,9 @@ train[mask][, .(mean_ruta = mean(Demanda_uni_equil),
 
 
 val = rec_train[Semana == 9]
-train = rec_train[Semana == m]
+#train = rec_train[Semana == m]
+
+train = rec_train[Semana == 7]
 
 
 
@@ -126,25 +130,43 @@ data_val = xgb.DMatrix(X_val, label = y_val, missing="NAN")
 
 
 model = xgb.train(data = data,
-                  nrounds = 300,
+                  nrounds = 100,
                   watchlist = list(train = data, eval = data_val),
                   max_depth = 9,
+                  #booster = "gblinear",
                   eta = 0.3, #0.3
-                  tree_method='approx',
+                  #tree_method='approx',
                   gamma = 0,
                   verbose = 1,
-                  #subsample = 0.9,
-                  #colsample_bytree = 0.75, #- this trips it up!
+                  #subsample = 0.7,
+                  #colsample_bytree = 0.7, #- this trips it up!
                   maximize = FALSE,
                   early.stop.round = 8)
+
+#0.464873 with only a few feats
+#maybe I should try to use this model as one of my picks?
 
 xgb.importance(feature_names = colnames(X_train), model) %>% xgb.plot.importance()
 
 #0.4480
-preds_w_8 = predict(model, X_val)
+preds_w_8 = predict(model, data_val)
+
+val$preds = predict(model, X_val)
+val$diff = (val$preds - val$Demanda_uni_equil)^2
+#the model messes up when actual demand is 0
+
+val %>% 
+    sample_n(10000) %>% 
+    ggplot(aes(x = Demanda_uni_equil, y = preds)) +
+    geom_point(aes(size = diff, alpha = 0.4))
+
 solution = data.frame(id = val$id, preds = preds_w_8)
 rmse(preds_w_8, val$Demanda_uni_equil)
+
+
 #0.448132
+
+
 
 #filling the preds up for when we didnt have prod+client combo in semana 3-7 but we have it in 8:
 
@@ -190,7 +212,8 @@ rmse(sol_change$val.Demanda_uni_equil, 0.3*sol_change$mean_client_prod_now + 0.7
 
 
 preds = coalesce(val$mean_client_prod, val$mean_prod, val$mean_agencia, mean(train$Demanda_uni_equil))
-rmse(val$Demanda_uni_equil, preds) #0.5239644
+rmse(val$Demanda_uni_equil, preds) #0.546179
+#this loses about a 0.03 from skipping one week.
 
 formula = Demanda_uni_equil ~ mean_agencia  +  ns(mean_cliente, 3) + mean_ruta + mean_prod + ns(mean_client_prod,3)
 
